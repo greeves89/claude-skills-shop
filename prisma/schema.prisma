@@ -1,0 +1,75 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Customer {
+  id              String     @id @default(cuid())
+  email           String     @unique
+  name            String?
+  // permanenter Token für den Download-Bereich
+  token           String     @unique @default(cuid())
+  stripeCustomerId String?   @unique
+  status          String     @default("active") // active | revoked
+  createdAt       DateTime   @default(now())
+  purchases       Purchase[]
+
+  @@index([email])
+  @@index([token])
+}
+
+model Purchase {
+  id                 String   @id @default(cuid())
+  customerId         String
+  customer           Customer @relation(fields: [customerId], references: [id])
+  stripeSessionId    String   @unique
+  stripePaymentIntent String?
+  amountCents        Int
+  currency           String   @default("eur")
+  status             String   @default("paid") // paid | refunded
+  bundle             String   @default("all-access")
+  createdAt          DateTime @default(now())
+  invoiceNumber      String?  @unique
+  invoiceIssuedAt    DateTime?
+
+  @@index([customerId])
+}
+
+model SkillFile {
+  id           String   @id @default(cuid())
+  slug         String   @unique // z.B. "podcast", "trading-market-scanner"
+  name         String
+  description  String?
+  version      String   @default("1.0.0")
+  category     String?  // productivity | trading | video | engineering | sales
+  // Pfad zur ZIP-Datei (relativ zu STORAGE_DIR)
+  filePath     String
+  fileSize     Int
+  sha256       String
+  uploadedBy   String?  // Agent-ID oder Admin
+  uploadedAt   DateTime @default(now())
+  visible      Boolean  @default(true)
+
+  @@index([slug])
+}
+
+model AdminUser {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+}
+
+model ApiKey {
+  id         String   @id @default(cuid())
+  label      String   // z.B. "Monty Agent"
+  keyHash    String   @unique
+  scope      String   @default("skill:upload")
+  createdAt  DateTime @default(now())
+  lastUsedAt DateTime?
+  revoked    Boolean  @default(false)
+}

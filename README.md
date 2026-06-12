@@ -1,62 +1,119 @@
 # claude-skills-shop
 
-Landing Page für [claudeskills.shop](https://claudeskills.shop) — Verkauf des Claude Skills All-Access Bundle (€99 Lifetime).
+SaaS für [claudeskills.shop](https://claudeskills.shop) — Landing Page, Admin-Dashboard, Stripe-Checkout, permanente Download-Links und Skill-Upload-API für Agents.
 
 ## Stack
+- Next.js 15 (App Router, Standalone Output)
+- Postgres + Prisma
+- Stripe Checkout + Webhooks
+- bcryptjs + jose (JWT-Cookies) für Admin-Sessions + API-Key-Hashing
+- Resend für Transaktions-E-Mails (Fallback: Console-Log in Dev)
+- Local Volume für Skill-ZIPs (kann später auf S3/R2)
 
-- Static HTML mit Tailwind via CDN
-- Stripe Payment Link für Checkout
-- Hosting: GitHub Pages, Netlify, oder Cloudflare Pages — alles statisch
+## Features
 
-## Setup
+### Public
+- `/` — Landing Page (€99 Lifetime All-Access)
+- `/lost-link` — Re-Send des permanenten Download-Links
+- `/downloads/[token]` — Customer Vault (permanent erreichbar)
+- `/success` — Post-Checkout
+- `/impressum`, `/datenschutz`
 
-### 1. Stripe Payment Link einrichten
-1. https://dashboard.stripe.com/payment-links → "Neuen Payment Link"
-2. Produkt: "Claude Skills All-Access Bundle" — €99 one-time
-3. Erfolgs-Redirect: `https://claudeskills.shop/success.html?session={CHECKOUT_SESSION_ID}`
-4. Payment Link kopieren
+### Admin (Login required)
+- `/admin` — Übersicht (Käufer, Umsatz, Skills)
+- `/admin/customers` — Käuferliste, Aktivieren/Sperren
+- `/admin/skills` — Skill-Übersicht, Sichtbarkeit toggeln
+- `/admin/api-keys` — API-Keys für Agent-Uploads (Hash gespeichert, Plain nur einmal sichtbar)
 
-### 2. Link in `index.html` einsetzen
-```js
-const STRIPE_PAYMENT_LINK = "https://buy.stripe.com/DEIN_ECHTER_LINK";
+### Agent Upload (Bearer-Auth)
+- `POST /api/admin/skills/upload` — multipart/form-data
+
+```
+curl -X POST https://claudeskills.shop/api/admin/skills/upload \
+  -H "Authorization: Bearer cs_..." \
+  -F file=@./skill.zip \
+  -F slug=my-skill \
+  -F name="My Skill" \
+  -F version=1.0.0 \
+  -F category=productivity \
+  -F "description=Was es macht"
 ```
 
-### 3. Webhook für Download-Fulfillment
-Stripe Webhook `checkout.session.completed` → kleiner Worker (Cloudflare Worker oder Vercel Function) signiert eine S3/R2-URL für das ZIP und schickt sie per E-Mail.
-
-Beispiel-Stack:
-- Cloudflare Worker für Webhook-Handler
-- Cloudflare R2 für ZIP-Storage
-- Resend.com oder Postmark für E-Mail-Versand
-
-### 4. Deploy
-```bash
-# Cloudflare Pages (empfohlen)
-git push  # automatisch deployed
-
-# Oder GitHub Pages
-# Settings → Pages → Branch: main → Save
-```
-
-## Domain
-
-- Vorschlag: `claudeskills.shop` (~€20/Jahr, Cloudflare/Namecheap)
-- Alternativen: `claude-skills.dev`, `skillpack.dev`, `agentskills.io`
-
-## Roadmap
-
-- [ ] Stripe Payment Link einrichten
-- [ ] Domain registrieren
-- [ ] DNS auf Cloudflare Pages zeigen
-- [ ] Webhook + Fulfillment-Worker bauen
-- [ ] E-Mail-Template für Download
-- [ ] Impressum + Datenschutz (kein Tracking, keine Cookies = einfach)
-- [ ] success.html — Bestätigungsseite nach Checkout
-- [ ] Analytics? Plausible.io self-hosted oder Cloudflare Web Analytics
-
-## Vorschau lokal
+## Lokal entwickeln
 
 ```bash
-python3 -m http.server 8000
-# http://localhost:8000
+cp .env.example .env.local
+# DATABASE_URL anpassen
+npm install --legacy-peer-deps
+npx prisma db push
+npm run dev
 ```
+
+## Produktion (Docker)
+
+```bash
+cp .env.example .env
+# alle Variablen ausfüllen, insb.:
+#   APP_URL=https://claudeskills.shop
+#   DATABASE_URL=postgresql://postgres:STARK@db:5432/claudeskills
+#   POSTGRES_PASSWORD=STARK
+#   STRIPE_SECRET_KEY=sk_live_...
+#   STRIPE_WEBHOOK_SECRET=whsec_... (nach Webhook-Erstellung)
+#   SESSION_SECRET= openssl rand -hex 32
+#   ADMIN_EMAIL + ADMIN_PASSWORD (für ersten Login)
+
+docker compose build
+docker compose up -d
+docker compose logs -f app
+```
+
+App läuft auf `127.0.0.1:3001` → nginx davorhängen.
+
+## nginx-Schnipsel
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name claudeskills.shop www.claudeskills.shop;
+
+    client_max_body_size 100M;  # für Skill-Uploads
+
+    location / {
+        proxy_pass http://127.0.0.1:3001;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Stripe Webhook — Raw Body wichtig!
+    location /api/stripe/webhook {
+        proxy_pass http://127.0.0.1:3001;
+        proxy_set_header Host $host;
+        proxy_request_buffering off;
+    }
+}
+```
+
+## Stripe-Setup
+
+1. Dashboard → Webhooks → Endpoint hinzufügen: `https://claudeskills.shop/api/stripe/webhook`
+2. Event: `checkout.session.completed`
+3. Signing-Secret kopieren → `STRIPE_WEBHOOK_SECRET` in `.env`
+4. Container neu starten: `docker compose restart app`
+
+## Erster Login
+
+Beim ersten Login mit `ADMIN_EMAIL` + `ADMIN_PASSWORD` aus `.env` wird ein Admin-User in der DB erstellt — danach kann das Passwort in der DB rotiert werden.
+
+## Skill-Upload aus Agents
+
+Im Admin → API-Keys einen Key erzeugen, einmal kopieren, in den Agent-Env als `CLAUDESKILLS_API_KEY` einsetzen. Dann curl-Upload wie oben.
+
+## Roadmap (post-MVP)
+- [ ] Auto-Build des Bundle-ZIPs nach jedem Skill-Upload
+- [ ] Stripe-Refunds direkt aus Admin auslösen
+- [ ] Webhook für `customer.refunded` → Status auf "refunded"
+- [ ] Mail-Versand für Update-Notifications bei neuen Skills
+- [ ] S3/R2 statt lokales Volume
+- [ ] Multi-Tier-Pricing (Free, Pro, Bundle)
