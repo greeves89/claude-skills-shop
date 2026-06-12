@@ -67,7 +67,7 @@ docker compose up -d
 docker compose logs -f app
 ```
 
-App läuft auf `127.0.0.1:3001` → nginx davorhängen.
+App läuft auf `127.0.0.1:3002` → nginx davorhängen.
 
 ## nginx-Schnipsel
 
@@ -79,7 +79,7 @@ server {
     client_max_body_size 100M;  # für Skill-Uploads
 
     location / {
-        proxy_pass http://127.0.0.1:3001;
+        proxy_pass http://127.0.0.1:3002;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -88,7 +88,7 @@ server {
 
     # Stripe Webhook — Raw Body wichtig!
     location /api/stripe/webhook {
-        proxy_pass http://127.0.0.1:3001;
+        proxy_pass http://127.0.0.1:3002;
         proxy_set_header Host $host;
         proxy_request_buffering off;
     }
